@@ -38,7 +38,7 @@ function extractBody(payload: any): string {
     for (const part of payload.parts) {
       const result = extractBody(part);
       if (result) return result;
-    }
+    
   }
   return '';
 }

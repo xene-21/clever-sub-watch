@@ -5,12 +5,12 @@ import { Link } from 'react-router-dom';
 
 export default function CTA() {
   return (
-    <section className="relative w-full py-32 overflow-hidden bg-[hsl(222_47%_6%)]">
+    <section className="relative w-full py-16 sm:py-24 lg:py-32 overflow-hidden bg-[hsl(222_47%_6%)]">
       {/* Layered gold radial glow */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_40%_at_50%_100%,hsl(43_57%_65%/0.12),transparent)] pointer-events-none" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
+        <div className="grid lg:grid-cols-2 gap-10 sm:gap-16 items-center">
           
           {/* Left Column */}
           <motion.div
@@ -24,7 +24,7 @@ export default function CTA() {
               <div className="inline-flex items-center rounded-full border border-[hsl(43_57%_65%/0.2)] bg-[hsl(43_57%_65%/0.05)] px-3 py-1 text-sm font-medium text-[hsl(43_57%_65%)] mb-6">
                 Start today
               </div>
-              <h2 className="text-4xl md:text-5xl font-bold tracking-tight text-white mb-4">
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white mb-4">
                 Stop leaking money on forgotten subscriptions.
               </h2>
               <p className="text-lg text-muted-foreground/80 max-w-[500px]">

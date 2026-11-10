@@ -6,25 +6,25 @@ import { cn } from "@/lib/utils";
 
 export function Features() {
   return (
-    <section className="relative py-32 bg-[hsl(222_47%_6%)] overflow-hidden">
+    <section className="relative py-16 sm:py-24 lg:py-32 bg-[hsl(222_47%_6%)] overflow-hidden">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Section Header */}
-        <div className="mb-20 max-w-2xl">
+        <div className="mb-10 sm:mb-16 lg:mb-20 max-w-2xl">
           <h3 className="text-[11px] uppercase tracking-[0.2em] text-[hsl(43_57%_65%)] font-medium mb-4">
             Intelligence Engine
           </h3>
-          <h2 className="font-display text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight">
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight">
             Stop leaking money.<br />
             <span className="text-white/40">Start building wealth.</span>
           </h2>
         </div>
 
         {/* Bento Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-4 sm:gap-6">
           
           {/* 1. Auto-Detection */}
-          <div className="md:col-span-4 rounded-2xl border border-white/8 bg-white/[0.02] p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
+          <div className="sm:col-span-2 md:col-span-4 rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground/50 mb-3 font-medium">
               POWERED BY QUILTT
             </div>
@@ -64,7 +64,7 @@ export function Features() {
           </div>
 
           {/* 2. AI Insights */}
-          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
+          <div className="sm:col-span-2 md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
             <div className="w-10 h-10 rounded-xl bg-[hsl(43_57%_65%)]/10 border border-[hsl(43_57%_65%)]/15 flex items-center justify-center text-[hsl(43_57%_65%)] mb-6">
               <Sparkles className="w-5 h-5" />
             </div>
@@ -86,7 +86,7 @@ export function Features() {
           </div>
 
           {/* 3. Bank-Grade Security */}
-          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
+          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
             <h4 className="text-xl font-display font-semibold text-white mb-2">Bank-Grade Security</h4>
             <p className="text-sm text-white/50">
               Your financial data is encrypted and strictly read-only.
@@ -111,7 +111,7 @@ export function Features() {
           </div>
 
           {/* 4. Smart Alerts */}
-          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
+          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
             <h4 className="text-xl font-display font-semibold text-white mb-2">Smart Alerts</h4>
             <p className="text-sm text-white/50">
               Never get caught off-guard by an auto-renewal again.
@@ -131,7 +131,7 @@ export function Features() {
           </div>
 
           {/* 5. Spending Analytics */}
-          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
+          <div className="md:col-span-2 rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
             <h4 className="text-xl font-display font-semibold text-white mb-2">Spending Analytics</h4>
             <p className="text-sm text-white/50">
               Visualize your subscription burn rate instantly.
@@ -159,7 +159,7 @@ export function Features() {
           </div>
 
           {/* 6. Instant Sync */}
-          <div className="md:col-span-2 md:col-start-3 lg:col-span-2 lg:col-start-auto rounded-2xl border border-white/8 bg-white/[0.02] p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
+          <div className="md:col-span-2 md:col-start-3 lg:col-span-2 lg:col-start-auto rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-8 overflow-hidden relative flex flex-col group hover:border-white/15 hover:bg-white/[0.04] transition-colors">
             <h4 className="text-xl font-display font-semibold text-white mb-2">Instant Sync</h4>
             <p className="text-sm text-white/50">
               Real-time synchronization across all your linked institutions.

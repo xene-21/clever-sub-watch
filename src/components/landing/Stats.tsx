@@ -41,9 +41,9 @@ export function Stats() {
   ];
 
   return (
-    <section className="relative py-20 border-y border-white/6 bg-[radial-gradient(ellipse_at_center,hsl(43_57%_65%/0.05),transparent_70%)] overflow-hidden">
+    <section className="relative py-14 sm:py-20 border-y border-white/6 bg-[radial-gradient(ellipse_at_center,hsl(43_57%_65%/0.05),transparent_70%)] overflow-hidden">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-12 md:gap-0">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-0">
           {stats.map((stat, i) => (
             <motion.div
               key={stat.label}
@@ -60,7 +60,7 @@ export function Stats() {
                 i !== stats.length - 1 ? "md:border-r md:border-white/6" : ""
               }`}
             >
-              <div className="font-display font-bold text-5xl md:text-6xl tabular-nums text-transparent bg-clip-text bg-gradient-to-br from-white to-white/60 mb-2">
+              <div className="font-display font-bold text-4xl sm:text-5xl md:text-6xl tabular-nums text-transparent bg-clip-text bg-gradient-to-br from-white to-white/60 mb-2">
                 <AnimatedNumber 
                   value={stat.value} 
                   prefix={stat.prefix} 

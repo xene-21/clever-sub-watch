@@ -60,13 +60,13 @@ export function Hero() {
         </motion.div>
 
         {/* H1 */}
-        <motion.h1 variants={itemVariants} className="max-w-4xl text-6xl md:text-7xl lg:text-8xl font-display font-bold tracking-tighter leading-[1.1] mb-6">
+        <motion.h1 variants={itemVariants} className="max-w-4xl text-4xl sm:text-5xl md:text-7xl lg:text-8xl font-display font-bold tracking-tighter leading-[1.1] mb-6">
           <span className="block text-foreground">Stop Paying for</span>
           <span className="block gradient-text pb-2">Subscriptions You Forgot</span>
         </motion.h1>
 
         {/* Subtext */}
-        <motion.p variants={itemVariants} className="max-w-xl text-lg text-muted-foreground/80 mb-10 leading-relaxed">
+        <motion.p variants={itemVariants} className="max-w-xl text-base sm:text-lg text-muted-foreground/80 mb-10 leading-relaxed">
           Subpilot connects to your bank and automatically surfaces every recurring charge — then uses AI to tell you what's worth keeping.
         </motion.p>
 

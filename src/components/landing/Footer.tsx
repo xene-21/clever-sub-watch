@@ -3,11 +3,11 @@ import { Link } from 'react-router-dom';
 
 export default function Footer() {
   return (
-    <footer className="w-full bg-white/[0.01] border-t border-white/6 py-16 text-white selection:bg-[hsl(43_57%_65%)]/20">
+    <footer className="w-full bg-white/[0.01] border-t border-white/6 py-10 sm:py-16 text-white selection:bg-[hsl(43_57%_65%)]/20">
       <div className="container mx-auto px-4 md:px-6">
         
         {/* Top Row */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-12 md:gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-8 md:gap-8">
           
           {/* Logo & Tagline */}
           <div className="md:col-span-2 flex flex-col space-y-4">
@@ -47,8 +47,8 @@ export default function Footer() {
             <div className="flex flex-col space-y-4">
               <h4 className="text-sm font-medium text-white/90">Legal</h4>
               <nav className="flex flex-col space-y-2.5">
-                <Link to="#" className="text-sm text-muted-foreground/60 hover:text-foreground/90 transition-colors">Privacy Policy</Link>
-                <Link to="#" className="text-sm text-muted-foreground/60 hover:text-foreground/90 transition-colors">Terms of Service</Link>
+                <Link to="/privacy" className="text-sm text-muted-foreground/60 hover:text-foreground/90 transition-colors">Privacy Policy</Link>
+                <Link to="/terms" className="text-sm text-muted-foreground/60 hover:text-foreground/90 transition-colors">Terms of Service</Link>
                 <Link to="#" className="text-sm text-muted-foreground/60 hover:text-foreground/90 transition-colors">Security</Link>
               </nav>
             </div>
