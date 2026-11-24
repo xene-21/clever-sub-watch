@@ -27,9 +27,14 @@ function googleRedirectUri() {
   return `http://localhost:${serverPort}/api/auth/google/callback`;
 }
 
+const LIVE_SITE = 'https://subpilot.nibravalabs.com';
+// This preview deployment was deleted. Vercel answers every path with DEPLOYMENT_NOT_FOUND.
+const RETIRED_SITES = ['https://clever-sub-watch-h0rlgpw40-subpilot.vercel.app'];
+
 function frontendUrl() {
-  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL.replace(/\/$/, '');
-  if (process.env.NODE_ENV === 'production') return 'https://subpilot.nibravalabs.com';
+  const configured = process.env.FRONTEND_URL?.replace(/\/$/, '');
+  if (configured && !RETIRED_SITES.includes(configured)) return configured;
+  if (process.env.NODE_ENV === 'production') return LIVE_SITE;
   return 'http://localhost:8080';
 }
 

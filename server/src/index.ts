@@ -20,7 +20,6 @@ const allowedOrigins = [
   'http://localhost:8080',
   'https://subpilot.nibravalabs.com',
   'https://subpilot.subpilotlabs.com',
-  'https://clever-sub-watch-h0rlgpw40-subpilot.vercel.app',
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
