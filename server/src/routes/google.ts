@@ -1,40 +1,74 @@
 import { Router } from 'express';
 import { google } from 'googleapis';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.NODE_ENV === 'production' 
-    ? 'https://subpilot.nibravalabs.com/api/auth/google/callback' 
-    : 'http://localhost:3000/api/auth/google/callback'
-);
-
-import jwt from 'jsonwebtoken';
-
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+const LOGIN_SCOPES = [
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+];
+const GMAIL_SCOPES = [
+  ...LOGIN_SCOPES,
+  'https://www.googleapis.com/auth/gmail.readonly',
+];
+
+const serverPort = process.env.PORT || '3000';
+
+function googleRedirectUri() {
+  if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://subpilot.nibravalabs.com/api/auth/google/callback';
+  }
+  return `http://localhost:${serverPort}/api/auth/google/callback`;
+}
+
+function frontendUrl() {
+  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL.replace(/\/$/, '');
+  if (process.env.NODE_ENV === 'production') return 'https://subpilot.nibravalabs.com';
+  return 'http://localhost:8080';
+}
+
+function googleConfigured() {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}
+
+function createOAuthClient() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    googleRedirectUri()
+  );
+}
 
 // 1. Get Auth URL (Called by frontend Connect Bank page)
 router.get('/url', requireAuth, (req: any, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline', // get refresh token
-    scope: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
+  if (!googleConfigured()) {
+    return res.status(500).json({ error: 'Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server/.env.' });
+  }
+  const url = createOAuthClient().generateAuthUrl({
+    access_type: 'offline',
+    scope: GMAIL_SCOPES,
     prompt: 'consent',
-    state: req.userId // pass userId through state to associate on callback
+    state: req.userId
   });
   res.json({ url });
 });
 
 // 1b. Get Auth URL for Login/Signup (Called by frontend Login page)
 router.get('/login-url', (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline', // get refresh token
-    scope: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
-    prompt: 'consent',
-    state: 'login' // tell callback this is a login flow
+  if (!googleConfigured()) {
+    return res.status(500).json({ error: 'Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server/.env.' });
+  }
+  const url = createOAuthClient().generateAuthUrl({
+    access_type: 'offline',
+    scope: LOGIN_SCOPES,
+    prompt: 'select_account',
+    state: 'login'
   });
   res.json({ url });
 });
@@ -49,16 +83,15 @@ router.get('/callback', async (req, res) => {
   }
 
   try {
+    const oauth2Client = createOAuthClient();
     const { tokens } = await oauth2Client.getToken(code as string);
     oauth2Client.setCredentials(tokens);
 
     // Get user email & profile
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
-    
-    const frontendUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://subpilot.nibravalabs.com' 
-      : 'http://localhost:8080';
+
+    const appUrl = frontendUrl();
 
     if (passedState === 'login') {
       // --- LOGIN / SIGNUP FLOW ---
@@ -98,7 +131,7 @@ router.get('/callback', async (req, res) => {
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
-      return res.redirect(`${frontendUrl}/dashboard`);
+      return res.redirect(`${appUrl}/dashboard`);
     } else {
       // --- CONNECT GMAIL TO EXISTING ACCOUNT FLOW ---
       const userId = passedState;
@@ -110,7 +143,7 @@ router.get('/callback', async (req, res) => {
           googleEmail: userInfo.data.email
         }
       });
-      return res.redirect(`${frontendUrl}/dashboard/connect?gmail=success`);
+      return res.redirect(`${appUrl}/dashboard/connect?gmail=success`);
     }
   } catch (error) {
     console.error('Google OAuth callback error:', error);

@@ -190,8 +190,8 @@ const Signup = () => {
                 try {
                   const res = await api.get('/auth/google/login-url');
                   if (res.url) window.location.href = res.url;
-                } catch(e) {
-                  toast.error('Failed to init Google Auth');
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'Failed to init Google Auth');
                 }
               }}
             >

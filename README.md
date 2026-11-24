@@ -132,7 +132,7 @@ cp server/.env.example server/.env
 ```
 Populate the values:
 ```env
-PORT=5000
+PORT=3000
 DATABASE_URL="postgresql://user:password@localhost:5432/clever_sub_watch?schema=public"
 DIRECT_URL="postgresql://user:password@localhost:5432/clever_sub_watch?schema=public"
 
@@ -146,6 +146,8 @@ MONO_SECRET_KEY="your_mono_secret_key"
 
 GOOGLE_CLIENT_ID="your_google_client_id.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET="your_google_client_secret"
+GOOGLE_REDIRECT_URI="http://localhost:3000/api/auth/google/callback"
+FRONTEND_URL="http://localhost:8080"
 ```
 
 ---
@@ -181,7 +183,7 @@ npm run dev:all
 ```
 
 - **Frontend**: Accessible at `http://localhost:5173` (or port specified by Vite)
-- **Backend API**: Running at `http://localhost:5000`
+- **Backend API**: Running at `http://localhost:3000`
 
 ---
 
