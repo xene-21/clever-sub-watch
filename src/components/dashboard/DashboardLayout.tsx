@@ -22,12 +22,29 @@ export default function DashboardLayout() {
   const navigate = useNavigate();
 
   const [userName, setUserName] = useState('User');
+  const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
     setMobileOpen(false);
-    const cached = localStorage.getItem('userName');
-    if (cached) setUserName(cached);
-  }, [location.pathname]);
+    let cancelled = false;
+    api.get('/auth/me')
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.user?.name) {
+          setUserName(res.user.name);
+          localStorage.setItem('userName', res.user.name);
+        }
+        setAllowed(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        localStorage.removeItem('userName');
+        navigate('/login', { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [location.pathname, navigate]);
 
   const handleLogout = async () => {
     try {
@@ -42,6 +59,10 @@ export default function DashboardLayout() {
       navigate('/');
     }
   };
+
+  if (!allowed) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   return (
     <div className="min-h-screen bg-background flex">
