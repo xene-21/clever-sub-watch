@@ -114,7 +114,7 @@ const Dashboard = () => {
 
   const cachedName = localStorage.getItem('userName');
   const fullName = userData?.user?.name || cachedName;
-  const firstName = fullName ? fullName.split(' ')[0] : 'back';
+  const firstName = fullName ? fullName.split(' ')[0] : '';
 
   const monthlySpend = calculateMonthlySpend(subscriptions);
   const monthlySpendChange = calculateMonthlySpendChange(subscriptions);
@@ -153,7 +153,7 @@ const Dashboard = () => {
               Overview
             </p>
             <h1 className="font-display text-2xl md:text-3xl font-bold tracking-tight">
-              Welcome back, {firstName}
+              Welcome back{firstName ? `, ${firstName}` : ''}
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
               Here's what's happening with your subscriptions.
