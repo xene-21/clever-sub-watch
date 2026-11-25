@@ -47,6 +47,47 @@ const Dashboard = () => {
   const [selectedSubscription, setSelectedSubscription] = useState<Subscription | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'amount' | 'date' | 'name'>('amount');
+  const [scanningGmail, setScanningGmail] = useState(false);
+
+  const handleScanGmail = async () => {
+    setScanningGmail(true);
+    try {
+      const statusRes = await fetch('/api/auth/google/status', { credentials: 'include' });
+      const status = await statusRes.json();
+      if (!status.connected) {
+        const res = await fetch('/api/auth/google/url', { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok || !data.url) throw new Error(data.error || 'Could not start Gmail access');
+        window.location.href = data.url;
+        return;
+      }
+      const toastId = toast.loading('Reading your Gmail for subscriptions...');
+      const res = await fetch('/api/auth/google/sync', { method: 'POST', credentials: 'include' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        if (data.code === 'GOOGLE_SCOPE' || data.code === 'GOOGLE_REAUTH' || data.code === 'NO_GOOGLE') {
+          const urlRes = await fetch('/api/auth/google/url', { credentials: 'include' });
+          const urlData = await urlRes.json();
+          if (urlData.url) {
+            window.location.href = urlData.url;
+            return;
+          }
+        }
+        throw new Error(data.error || 'Could not read Gmail');
+      }
+      await queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
+      toast.success(
+        data.detected > 0
+          ? `Found ${data.detected} subscription${data.detected === 1 ? '' : 's'} in your Gmail.`
+          : 'No new subscription receipts found in your Gmail.',
+        { id: toastId }
+      );
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not read Gmail.');
+    } finally {
+      setScanningGmail(false);
+    }
+  };
 
   const { data: subscriptions = [], isLoading } = useSubscriptions();
 
@@ -214,6 +255,16 @@ const Dashboard = () => {
                       </AlertDialogContent>
                     </AlertDialog>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-muted-foreground hover:text-foreground gap-1 h-7 px-2"
+                    disabled={scanningGmail}
+                    onClick={handleScanGmail}
+                  >
+                    {scanningGmail ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    Scan Gmail
+                  </Button>
                   <Link to="/dashboard/subscriptions">
                     <Button
                       variant="ghost"
@@ -290,14 +341,25 @@ const Dashboard = () => {
                       {searchQuery ? 'No results found' : 'No subscriptions yet'}
                     </p>
                     <p className="text-xs text-muted-foreground/50 mt-1">
-                      {searchQuery ? 'Try a different search term' : 'Connect your bank to detect them automatically'}
+                      {searchQuery ? 'Try a different search term' : 'Connect a bank, or let us read this account’s Gmail receipts'}
                     </p>
                     {!searchQuery && (
-                      <Link to="/dashboard/connect">
-                        <Button size="sm" className="mt-4 gap-1.5 h-8 text-xs">
-                          Connect Bank
+                      <div className="flex items-center gap-2 mt-4">
+                        <Button
+                          size="sm"
+                          className="gap-1.5 h-8 text-xs"
+                          disabled={scanningGmail}
+                          onClick={handleScanGmail}
+                        >
+                          {scanningGmail ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          Scan Gmail
                         </Button>
-                      </Link>
+                        <Link to="/dashboard/connect">
+                          <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs">
+                            Connect Bank
+                          </Button>
+                        </Link>
+                      </div>
                     )}
                   </motion.div>
                 ) : (
