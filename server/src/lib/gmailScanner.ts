@@ -111,6 +111,67 @@ function computeNextDate(from: Date, cycle: string): Date {
   return next;
 }
 
+function upcomingBillingDate(from: Date, cycle: string): Date {
+  let next = computeNextDate(from, cycle);
+  const now = new Date();
+  let guard = 0;
+  while (next < now && guard < 36) {
+    next = computeNextDate(next, cycle);
+    guard++;
+  }
+  return next;
+}
+
+function getHeader(message: any, name: string): string | null {
+  const headers: { name: string; value: string }[] = message.payload?.headers ?? [];
+  const header = headers.find((h) => h.name.toLowerCase() === name.toLowerCase());
+  return header?.value ?? null;
+}
+
+function senderName(from: string | null): string {
+  if (!from) return '';
+  const name = from.replace(/<[^>]+>/, '').replace(/"/g, '').trim();
+  return name || '';
+}
+
+// Used when OpenAI is not configured. The Gmail query already limited the inbox
+// to receipt-like subjects; this still requires a recurring-charge phrase and a price.
+function fallbackClassify(
+  body: string,
+  from: string | null,
+  emailDate: string | null
+): {
+  name: string;
+  price: number;
+  billingCycle: string;
+  category: string;
+  startDate: string;
+} | null {
+  const lower = body.toLowerCase();
+  if (!/subscription|renew|recurring|membership|billing cycle|next billing/.test(lower)) return null;
+
+  const amountMatch = body.match(/(?:USD|US\$|\$)\s*([0-9]{1,4}(?:[.,][0-9]{2})?)/i);
+  if (!amountMatch) return null;
+  const price = Number(amountMatch[1].replace(',', ''));
+  if (!Number.isFinite(price) || price <= 0 || price > 2000) return null;
+
+  let billingCycle = 'monthly';
+  if (/annual|yearly|per year|\/yr|billed yearly/.test(lower)) billingCycle = 'yearly';
+  else if (/quarter/.test(lower)) billingCycle = 'quarterly';
+  else if (/weekly|per week/.test(lower)) billingCycle = 'weekly';
+
+  const name = senderName(from).slice(0, 80);
+  if (name.length < 2) return null;
+
+  return {
+    name,
+    price,
+    billingCycle,
+    category: 'Other',
+    startDate: emailDate ?? new Date().toISOString().split('T')[0],
+  };
+}
+
 // Per-email AI classification — returns structured subscription data or null
 async function classifyEmail(
   body: string,
@@ -258,7 +319,9 @@ export async function scanUserEmails(userId: string): Promise<number> {
 
     const emailDate = getEmailDate(detail);
 
-    const result = await classifyEmail(body, emailDate);
+    const result = process.env.OPENAI_API_KEY
+      ? await classifyEmail(body, emailDate)
+      : fallbackClassify(body, getHeader(detail, 'from'), emailDate);
     if (!result) continue;
 
     const key = result.name.toLowerCase();
@@ -269,7 +332,7 @@ export async function scanUserEmails(userId: string): Promise<number> {
     seen.add(key);
 
     const startDate = new Date(result.startDate);
-    const nextBillingDate = computeNextDate(startDate, result.billingCycle);
+    const nextBillingDate = upcomingBillingDate(startDate, result.billingCycle);
 
     await prisma.subscription.create({
       data: {

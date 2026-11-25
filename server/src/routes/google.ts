@@ -58,6 +58,7 @@ router.get('/url', requireAuth, (req: any, res) => {
   const url = createOAuthClient().generateAuthUrl({
     access_type: 'offline',
     scope: GMAIL_SCOPES,
+    include_granted_scopes: true,
     prompt: 'consent',
     state: req.userId
   });
