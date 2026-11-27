@@ -1,6 +1,7 @@
   import express from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { upsertLearnedMerchant } from '../lib/solrClient';
 
 const router = express.Router();
 
@@ -144,6 +145,10 @@ router.post('/', async (req: AuthRequest, res) => {
       },
     });
 
+    if (category && category !== 'Other') {
+      upsertLearnedMerchant(merchant, category, frequency).catch(() => {});
+    }
+
     res.status(201).json(newSub);
   } catch (error) {
     console.error('Error creating subscription:', error);
@@ -191,6 +196,10 @@ router.put('/:id', async (req: AuthRequest, res) => {
         ...(detectionSource && { detectionSource }),
       },
     });
+
+    if (updatedSub.category && updatedSub.category !== 'Other') {
+      upsertLearnedMerchant(updatedSub.name, updatedSub.category, updatedSub.billingCycle).catch(() => {});
+    }
 
     res.json(updatedSub);
   } catch (error) {

@@ -1,8 +1,31 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './prisma';
+import {
+  getUserTransactionsGrouped,
+  indexTransactions,
+  inferCategoryViaSolr,
+  isSolrOnline,
+  lookupMerchant,
+  resetSolrAvailabilityCache,
+  upsertLearnedMerchant,
+  type SolrMatchResult,
+  type SolrTransactionDoc,
+} from './solrClient';
+import {
+  isSimilarMerchant,
+  mapWithConcurrency,
+  normalizeMerchant,
+  staticIsNonSubscription,
+  staticResolveMerchantCategory,
+  stripGatewayPrefix,
+} from './merchantFallback';
 
-const prisma = new PrismaClient();
+export { resetSolrAvailabilityCache };
 
-interface QuilttTransaction {
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
+
+export interface QuilttTransaction {
   transaction_id: string;
   merchant_name: string | null;
   name: string;
@@ -12,201 +35,192 @@ interface QuilttTransaction {
   pending: boolean;
 }
 
-interface DetectedSubscription {
-  name: string;
+interface ResolvedDescriptor {
+  merchantKey: string;
+  canonicalName: string;
+  category: string;
+  isBlocklisted: boolean;
+  fromSolr: boolean;
+}
+
+interface NormalizedTx {
+  transaction_id: string;
+  raw_name: string;
+  merchant_raw: string;
+  merchant_key: string;
+  canonical_name: string;
+  category: string;
   amount: number;
-  billingCycle: 'weekly' | 'monthly' | 'quarterly' | 'yearly';
-  billingCycleDay: number;
-  lastBillingDate: Date;
-  nextBillingDate: Date;
-  category: string | null;
-  transactionId: string;
-  transactions: QuilttTransaction[];
+  date: string;
+  connection_id?: string;
+  mono_connection_id?: string;
 }
 
-// ─────────────────────────────────────────────
-// Known merchant → category map
-// Mirrors the categories in src/lib/brands.ts so the server can resolve
-// a meaningful category without importing a frontend module.
-// Priority: merchant dict → Plaid raw category → 'Other'
-// ─────────────────────────────────────────────
-const MERCHANT_CATEGORIES: Record<string, string> = {
-  // Streaming
-  netflix: 'Streaming', hulu: 'Streaming', disney: 'Streaming', 'disney+': 'Streaming',
-  'hbo max': 'Streaming', max: 'Streaming', paramount: 'Streaming', 'paramount+': 'Streaming',
-  peacock: 'Streaming', 'apple tv': 'Streaming', 'apple tv+': 'Streaming',
-  'amazon prime': 'Streaming', 'prime video': 'Streaming',
-  youtube: 'Streaming', 'youtube premium': 'Streaming', twitch: 'Streaming',
-  crunchyroll: 'Streaming', 'discovery+': 'Streaming', dazn: 'Streaming',
-  mubi: 'Streaming', 'now tv': 'Streaming', nowtv: 'Streaming',
-  'sky go': 'Streaming', sky: 'Streaming', 'bbc iplayer': 'Streaming', bbc: 'Streaming',
-  britbox: 'Streaming', shudder: 'Streaming', plex: 'Streaming',
-  // Music
-  spotify: 'Music', 'apple music': 'Music', 'amazon music': 'Music',
-  tidal: 'Music', deezer: 'Music', soundcloud: 'Music', pandora: 'Music',
-  // Gaming
-  xbox: 'Gaming', 'xbox game pass': 'Gaming', playstation: 'Gaming',
-  'playstation plus': 'Gaming', 'ps plus': 'Gaming', nintendo: 'Gaming',
-  'nintendo switch': 'Gaming', 'ea play': 'Gaming', steam: 'Gaming',
-  'epic games': 'Gaming', 'epic games store': 'Gaming',
-  // Productivity
-  microsoft: 'Productivity', 'microsoft 365': 'Productivity', 'office 365': 'Productivity',
-  adobe: 'Productivity', 'creative cloud': 'Productivity', figma: 'Productivity',
-  notion: 'Productivity', slack: 'Productivity', zoom: 'Productivity',
-  dropbox: 'Productivity', github: 'Productivity', grammarly: 'Productivity',
-  evernote: 'Productivity', todoist: 'Productivity', trello: 'Productivity',
-  asana: 'Productivity', monday: 'Productivity', canva: 'Productivity',
-  webflow: 'Productivity', squarespace: 'Productivity', wix: 'Productivity',
-  wordpress: 'Productivity', shopify: 'Productivity', intercom: 'Productivity',
-  hubspot: 'Productivity', mailchimp: 'Productivity', zapier: 'Productivity',
-  'google workspace': 'Productivity', apple: 'Productivity', linear: 'Productivity',
-  jira: 'Productivity', confluence: 'Productivity', atlassian: 'Productivity',
-  jetbrains: 'Productivity', autocad: 'Productivity',
-  // AI Tools
-  'github copilot': 'AI Tools', chatgpt: 'AI Tools', openai: 'AI Tools',
-  'claude ai': 'AI Tools', claude: 'AI Tools', anthropic: 'AI Tools',
-  gemini: 'AI Tools', 'google gemini': 'AI Tools',
-  perplexity: 'AI Tools', 'perplexity ai': 'AI Tools',
-  midjourney: 'AI Tools', 'hugging face': 'AI Tools', huggingface: 'AI Tools',
-  'stability ai': 'AI Tools', 'copy.ai': 'AI Tools', copyai: 'AI Tools',
-  jasper: 'AI Tools', cursor: 'AI Tools', replicate: 'AI Tools',
-  runway: 'AI Tools', runwayml: 'AI Tools', elevenlabs: 'AI Tools',
-  // Cloud Storage
-  google: 'Cloud Storage', 'google one': 'Cloud Storage', aws: 'Cloud Storage',
-  icloud: 'Cloud Storage', digitalocean: 'Cloud Storage', heroku: 'Cloud Storage',
-  vercel: 'Cloud Storage',
-  // Security
-  '1password': 'Security', lastpass: 'Security', bitwarden: 'Security',
-  nordvpn: 'Security', expressvpn: 'Security', surfshark: 'Security',
-  dashlane: 'Security', mcafee: 'Security', norton: 'Security',
-  kaspersky: 'Security', avast: 'Security', malwarebytes: 'Security',
-  // Finance
-  monzo: 'Finance', revolut: 'Finance', paypal: 'Finance', coinbase: 'Finance',
-  klarna: 'Finance', transferwise: 'Finance', wise: 'Finance', stripe: 'Finance',
-  quickbooks: 'Finance', xero: 'Finance',
-  // Fitness
-  peloton: 'Fitness', strava: 'Fitness', headspace: 'Fitness', calm: 'Fitness',
-  myfitnesspal: 'Fitness', whoop: 'Fitness', noom: 'Fitness',
-  'the gym group': 'Fitness', 'pure gym': 'Fitness', puregym: 'Fitness',
-  'david lloyd': 'Fitness', 'virgin active': 'Fitness',
-  // Food & Drink
-  hellofresh: 'Food & Drink', 'hello fresh': 'Food & Drink',
-  deliveroo: 'Food & Drink', 'uber eats': 'Food & Drink',
-  doordash: 'Food & Drink', 'just eat': 'Food & Drink',
-  starbucks: 'Food & Drink', mcdonalds: 'Food & Drink', "mcdonald's": 'Food & Drink',
-  'burger king': 'Food & Drink', burgerking: 'Food & Drink', kfc: 'Food & Drink',
-  dominos: 'Food & Drink', "domino's": 'Food & Drink',
-  'pizza hut': 'Food & Drink', pizzahut: 'Food & Drink',
-  subway: 'Food & Drink', chipotle: 'Food & Drink', 'five guys': 'Food & Drink',
-  nandos: 'Food & Drink', "nando's": 'Food & Drink', greggs: 'Food & Drink',
-  pret: 'Food & Drink', 'pret a manger': 'Food & Drink', wagamama: 'Food & Drink',
-  leon: 'Food & Drink', 'costa coffee': 'Food & Drink', costa: 'Food & Drink',
-  'tim hortons': 'Food & Drink', 'shake shack': 'Food & Drink',
-  'papa johns': 'Food & Drink', "papa john's": 'Food & Drink',
-  'taco bell': 'Food & Drink', tacobell: 'Food & Drink',
-  dunkin: 'Food & Drink', "dunkin'": 'Food & Drink', wetherspoons: 'Food & Drink',
-  // News & Reading
-  'new york times': 'News & Reading', medium: 'News & Reading',
-  substack: 'News & Reading', kindle: 'News & Reading', audible: 'News & Reading',
-  // Education
-  duolingo: 'Education', coursera: 'Education', skillshare: 'Education',
-  udemy: 'Education', linkedin: 'Education', 'linkedin premium': 'Education',
-  masterclass: 'Education', 'khan academy': 'Education',
-  // African & Regional Services
-  showmax: 'Streaming', dstv: 'Streaming', gotv: 'Streaming', multichoice: 'Streaming',
-  starlink: 'Productivity', mtn: 'Telecom', airtel: 'Telecom', glo: 'Telecom',
-  // Transport
-  uber: 'Transport', lyft: 'Transport', 'national rail': 'Transport', tfl: 'Transport',
-  // Telecom
-  'at&t': 'Telecom', att: 'Telecom', verizon: 'Telecom',
-  't-mobile': 'Telecom', tmobile: 'Telecom', o2: 'Telecom',
-  vodafone: 'Telecom', ee: 'Telecom', three: 'Telecom', sprint: 'Telecom',
-  mintmobile: 'Telecom', 'mint mobile': 'Telecom',
-  // Shopping
-  amazon: 'Shopping', walmart: 'Shopping', 'walmart+': 'Shopping',
-  costco: 'Shopping', target: 'Shopping', asos: 'Shopping',
-  instacart: 'Shopping', shipt: 'Shopping', chewy: 'Shopping',
-  ebay: 'Shopping', etsy: 'Shopping',
-  // Social & Dating
-  tinder: 'Social & Dating', bumble: 'Social & Dating', hinge: 'Social & Dating',
-  okcupid: 'Social & Dating', match: 'Social & Dating', 'match.com': 'Social & Dating',
-  patreon: 'Social & Dating', onlyfans: 'Social & Dating',
-  'youtube channel': 'Social & Dating', kickstarter: 'Social & Dating',
-  gofundme: 'Social & Dating',
-};
+// ─────────────────────────────────────────────────────────────
+// Descriptor resolution (Solr primary -> static fallback)
+// Runs BEFORE grouping so variant descriptors like "NFLX DIGITAL"
+// and "PAYPAL *NETFLIX" converge to the same canonical merchantKey.
+// ─────────────────────────────────────────────────────────────
 
-/**
- * Strips common payment gateway and transaction prefixes (Paystack, Flutterwave, POS, TRF, etc.)
- */
-function stripGatewayPrefix(name: string): string {
-  // Strip payment gateway prefixes only — not brand names like Multichoice
-  return name.replace(/^(paystack|flw|flutterwave|pos|web|pos\/web|nip|trf)\s*[*:\/ -]\s*/i, '').trim();
-}
+async function resolveDescriptors(
+  debits: QuilttTransaction[],
+  userId: string,
+  useSolr: boolean
+): Promise<Map<string, ResolvedDescriptor>> {
+  const uniquePairs = new Map<string, { rawName: string; merchantName: string | null; rawCategory: string | null }>();
 
-/**
- * Resolve a category for a merchant name.
- * 1. Exact match against the merchant dictionary.
- * 2. Partial match (dictionary key contained in merchant name, or vice versa).
- * 3. Fall back to the raw category string from the transaction.
- * 4. Default to 'Other'.
- */
-function resolveMerchantCategory(merchantName: string, rawCategory: string | null): string {
-  const stripped = stripGatewayPrefix(merchantName);
-  const normalized = stripped.toLowerCase()
-    .replace(/\*.*$/, '')
-    .replace(/\.(com|net|org|io)$/, '')
-    .replace(/[^a-z0-9 '&-]/g, '')
-    .trim();
-
-  // 1. Exact match
-  if (MERCHANT_CATEGORIES[normalized]) return MERCHANT_CATEGORIES[normalized];
-
-  // 2. Partial match
-  for (const key of Object.keys(MERCHANT_CATEGORIES)) {
-    if (normalized.includes(key) || key.includes(normalized)) {
-      return MERCHANT_CATEGORIES[key];
+  for (const tx of debits) {
+    const key = `${tx.merchant_name ?? ''}||${tx.name}`;
+    if (!uniquePairs.has(key)) {
+      uniquePairs.set(key, {
+        rawName: tx.name,
+        merchantName: tx.merchant_name,
+        rawCategory: tx.category?.[0] ?? null,
+      });
     }
   }
 
-  // 3. Raw category fallback
-  if (rawCategory) {
-    return rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase();
+  const cache = new Map<string, ResolvedDescriptor>();
+  const entries = Array.from(uniquePairs.entries());
+
+  await mapWithConcurrency(entries, 8, async ([cacheKey, info]) => {
+    const displayFallback = info.merchantName || info.rawName;
+
+    // Fast static blocklist pre-check across both raw name and merchant_name
+    if (
+      staticIsNonSubscription(info.rawName) ||
+      (info.merchantName && staticIsNonSubscription(info.merchantName))
+    ) {
+      cache.set(cacheKey, {
+        merchantKey: 'blocklist',
+        canonicalName: displayFallback,
+        category: 'BLOCKLIST',
+        isBlocklisted: true,
+        fromSolr: false,
+      });
+      return;
+    }
+
+    if (useSolr) {
+      const match: SolrMatchResult | null = await lookupMerchant(info.rawName, info.merchantName);
+      if (match) {
+        if (match.is_non_subscription) {
+          cache.set(cacheKey, {
+            merchantKey: `blocklist:${match.id}`,
+            canonicalName: match.canonical_name,
+            category: 'BLOCKLIST',
+            isBlocklisted: true,
+            fromSolr: true,
+          });
+          return;
+        }
+        cache.set(cacheKey, {
+          merchantKey: `solr:${match.id}`,
+          canonicalName: match.canonical_name,
+          category: match.category || 'Other',
+          isBlocklisted: false,
+          fromSolr: true,
+        });
+        return;
+      }
+
+      // Unknown merchant in seed: try Solr similarity / category-hint inference
+      const inferredCategory =
+        (await inferCategoryViaSolr(
+          `${info.merchantName ?? ''} ${info.rawName}`.trim(),
+          userId
+        )) ?? staticResolveMerchantCategory(displayFallback, info.rawCategory);
+
+      const norm = normalizeMerchant(displayFallback) || displayFallback.toLowerCase();
+      cache.set(cacheKey, {
+        merchantKey: `norm:${norm}`,
+        canonicalName: stripGatewayPrefix(displayFallback) || displayFallback,
+        category: inferredCategory,
+        isBlocklisted: false,
+        fromSolr: false,
+      });
+      return;
+    }
+
+    // Solr offline fallback
+    const norm = normalizeMerchant(displayFallback) || displayFallback.toLowerCase();
+    cache.set(cacheKey, {
+      merchantKey: `norm:${norm}`,
+      canonicalName: displayFallback,
+      category: staticResolveMerchantCategory(displayFallback, info.rawCategory),
+      isBlocklisted: false,
+      fromSolr: false,
+    });
+  });
+
+  return cache;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Cluster transactions by amount similarity within a merchant group
+// e.g. separates iCloud ($2.99) from Apple Music ($10.99)
+// ─────────────────────────────────────────────────────────────
+
+function clusterByAmount(txs: NormalizedTx[]): NormalizedTx[][] {
+  const clusters: Array<{ anchorAmount: number; items: NormalizedTx[] }> = [];
+
+  for (const tx of txs) {
+    let placed = false;
+    for (const c of clusters) {
+      const diff = Math.abs(c.anchorAmount - tx.amount);
+      if (diff / Math.max(c.anchorAmount, 1) < 0.10 || diff <= 1) {
+        c.items.push(tx);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      clusters.push({ anchorAmount: tx.amount, items: [tx] });
+    }
   }
 
-  // 4. Ultimate fallback
-  return 'Other';
+  return clusters.map(c => c.items);
 }
 
+/**
+ * Fallback in-memory grouping when Solr `transactions` collection is unavailable.
+ */
+function groupInMemory(txs: NormalizedTx[]): NormalizedTx[][] {
+  const groups = new Map<string, NormalizedTx[]>();
 
-function normalizeMerchant(name: string): string {
-  const stripped = stripGatewayPrefix(name);
-  return stripped
-    .toLowerCase()
-    .replace(/\*.*$/, '')          // Remove everything after * (e.g. "NETFLIX*1")
-    .replace(/\.(com|net|org|io)$/, '') // Strip TLDs
-    .replace(/[^a-z0-9 ]/g, '')   // Strip special chars
-    .trim();
+  for (const tx of txs) {
+    let matchedKey: string | null = null;
+    for (const [key] of groups) {
+      const sepIdx = key.lastIndexOf('|');
+      const keyMerchant = key.slice(0, sepIdx);
+      const parsedAmount = parseFloat(key.slice(sepIdx + 1));
+
+      const sameMerchant = isSimilarMerchant(keyMerchant, tx.merchant_key);
+      const diff = Math.abs(parsedAmount - tx.amount);
+      const similarAmount = diff / Math.max(parsedAmount, 1) < 0.10 || diff <= 1;
+
+      if (sameMerchant && similarAmount) {
+        matchedKey = key;
+        break;
+      }
+    }
+    if (matchedKey) {
+      groups.get(matchedKey)!.push(tx);
+    } else {
+      groups.set(`${tx.merchant_key}|${tx.amount}`, [tx]);
+    }
+  }
+
+  return Array.from(groups.values());
 }
 
-// ─────────────────────────────────────────────
-// Fuzzy match: returns true if two merchant names are similar
-// ─────────────────────────────────────────────
-function isSimilarMerchant(a: string, b: string): boolean {
-  const na = normalizeMerchant(a);
-  const nb = normalizeMerchant(b);
-  if (na === nb) return true;
-  // Prefix match (e.g. "amazon" vs "amazon prime")
-  if (na.startsWith(nb) || nb.startsWith(na)) return true;
-  return false;
-}
+// ─────────────────────────────────────────────────────────────
+// Billing cycle detection
+// ─────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────
-// Detect billing cycle from gaps between transaction dates (in days)
-// ─────────────────────────────────────────────
 function detectCycle(gaps: number[]): 'weekly' | 'monthly' | 'quarterly' | 'yearly' | null {
   if (gaps.length === 0) return null;
   const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-
   if (avg >= 6 && avg <= 8) return 'weekly';
   if (avg >= 28 && avg <= 35) return 'monthly';
   if (avg >= 85 && avg <= 100) return 'quarterly';
@@ -214,172 +228,129 @@ function detectCycle(gaps: number[]): 'weekly' | 'monthly' | 'quarterly' | 'year
   return null;
 }
 
-// ─────────────────────────────────────────────
-// Compute next billing date from last date + cycle
-// ─────────────────────────────────────────────
 function computeNextBillingDate(lastDate: Date, cycle: string): Date {
   const next = new Date(lastDate);
   switch (cycle) {
-    case 'weekly':     next.setDate(next.getDate() + 7);   break;
-    case 'monthly':    next.setMonth(next.getMonth() + 1); break;
-    case 'quarterly':  next.setMonth(next.getMonth() + 3); break;
-    case 'yearly':     next.setFullYear(next.getFullYear() + 1); break;
+    case 'weekly':    next.setDate(next.getDate() + 7);    break;
+    case 'monthly':   next.setMonth(next.getMonth() + 1);  break;
+    case 'quarterly': next.setMonth(next.getMonth() + 3);  break;
+    case 'yearly':    next.setFullYear(next.getFullYear() + 1); break;
   }
   return next;
 }
 
-// ─────────────────────────────────────────────
-// Non-subscription blocklist
-// Transactions whose raw name matches any of these patterns are excluded
-// BEFORE the recurrence-pattern check runs, so they never surface as
-// subscriptions regardless of how regularly they appear.
-// ─────────────────────────────────────────────
-
-/**
- * Patterns that are NEVER subscriptions:
- *  - Bank / peer-to-peer transfers
- *  - Loan / debt repayments
- *  - Ride-share one-off trips (not memberships)
- *  - Grocery / supermarket / petrol / retail shops
- *  - ATM / cash withdrawals
- *  - Generic "payment" descriptors
- */
-const NON_SUBSCRIPTION_PATTERNS: RegExp[] = [
-  // Transfers & peer payments
-  /\btransfer\b/i,
-  /\btrf\b/i,
-  /\bsend money\b/i,
-  /\bwire transfer\b/i,
-  /\bzelle\b/i,
-  /\bcash app\b/i,
-  /\bvenmo\b/i,
-
-  // Repayments / loans
-  /\brepayment\b/i,
-  /\bloan repay/i,
-  /\bmypay\b/i,
-
-  // Direct-debit store-card / credit-card bill payments
-  /\bdirect debit\b/i,
-  /\bstorecrd\b/i,
-  /\bcredit card payment\b/i,
-  /\bcard payment\b/i,
-
-  // Ride-share one-off trips (keyword after brand distinguishes trip from membership)
-  /\buber\s*\*?(trip|x|pool|xl|black)\b/i,
-  /\blyft\s*\*?(airport|standard|shared|xl|lux|black)\b/i,
-  /\bbolt\s*(trip|food)\b/i,
-
-  // Grocery / supermarket / retail
-  /\bkroger\b/i,
-  /\bwhole foods\b/i,
-  /\bsafeway\b/i,
-  /\bpublix\b/i,
-  /\btrader joe/i,
-  /\baldi\b/i,
-  /\bwegmans\b/i,
-  /\bfood lion\b/i,
-  /\btesco\b/i,
-  /\bsainsbury/i,
-  /\basda\b/i,
-  /\bmorrisons?\b/i,
-  /\bwaitrose\b/i,
-  /\bmarks & spencer\b/i,
-  /\bm&s food\b/i,
-  /\blidl\b/i,
-  /\bthorntons?\b/i,          // confectionery shop, not a subscription service
-  /\bholland & barrett\b/i,
-  /\bco-?op\b/i,
-
-  // Petrol / fuel stations
-  /\bshell\b/i,
-  /\bbp\b/i,
-  /\besso\b/i,
-  /\btexaco\b/i,
-  /\bexxon\b/i,
-  /\bmobil\b/i,
-  /\bchevron\b/i,
-
-  // ATM & cash
-  /\batm\b/i,
-  /\bcash withdrawal\b/i,
-  /\bcashback\b/i,
-
-  // Generic payment descriptors
-  /\bpayment to\b/i,
-  /\bpay to\b/i,
-  /\bbill pay(ment)?\b/i,
-  /\baccount payment\b/i,
-];
-
-/**
- * Returns true if the transaction name resembles a non-subscription
- * (transfer, repayment, grocery run, fuel, ATM, etc.).
- */
-function isNonSubscription(rawName: string): boolean {
-  return NON_SUBSCRIPTION_PATTERNS.some(pattern => pattern.test(rawName));
+function toSolrDate(dateStr: string): string {
+  if (dateStr.includes('T')) return new Date(dateStr).toISOString();
+  return `${dateStr}T00:00:00Z`;
 }
 
-// ─────────────────────────────────────────────
-// Main recurring engine
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Main recurring engine — Solr-enhanced
+// ─────────────────────────────────────────────────────────────
+
 export async function runRecurringEngine(
   userId: string,
   transactions: QuilttTransaction[],
   connectionId?: string,
   monoConnectionId?: string
 ): Promise<{ detected: number; updated: number }> {
-
   const detectionSource = monoConnectionId ? 'mono' : 'quiltt';
+  const useSolr = await isSolrOnline('RecurringEngine');
 
-  // 1. Filter out pending, refund (negative amount), and non-subscription transactions
-  const debits = transactions.filter(
-    t => !t.pending && t.amount > 0 && !isNonSubscription(t.merchant_name || t.name)
-  );
+  // ── Step 1: Keep only settled debit transactions ──────────────────
+  const debits = transactions.filter(t => !t.pending && t.amount > 0);
+  if (debits.length === 0 && !useSolr) {
+    return { detected: 0, updated: 0 };
+  }
 
-  // 2. Group by normalized merchant name
-  const groups = new Map<string, QuilttTransaction[]>();
+  // ── Step 2: Canonicalise & filter blocklisted descriptors via Solr ─
+  const resolutionMap = await resolveDescriptors(debits, userId, useSolr);
 
+  const validNormalized: NormalizedTx[] = [];
   for (const tx of debits) {
-    const rawName = tx.merchant_name || tx.name;
-    const normalized = normalizeMerchant(rawName);
+    const cacheKey = `${tx.merchant_name ?? ''}||${tx.name}`;
+    const resolved = resolutionMap.get(cacheKey);
+    if (!resolved || resolved.isBlocklisted) continue;
 
-    // Try to find an existing group with a similar name AND similar amount
-    let matched = false;
-    for (const [key] of groups) {
-      const [keyName, keyAmount] = key.split('|');
-      const isSimilarName = isSimilarMerchant(keyName, normalized);
-      
-      const parsedAmount = parseFloat(keyAmount);
-      // Allow up to 10% variance in amount or flat $1 difference to group them
-      const isSimilarAmount = Math.abs(parsedAmount - tx.amount) / Math.max(parsedAmount, 1) < 0.10 || Math.abs(parsedAmount - tx.amount) <= 1;
+    validNormalized.push({
+      transaction_id: tx.transaction_id,
+      raw_name: tx.name,
+      merchant_raw: tx.merchant_name || tx.name,
+      merchant_key: resolved.merchantKey,
+      canonical_name: resolved.canonicalName,
+      category: resolved.category,
+      amount: tx.amount,
+      date: tx.date,
+      connection_id: connectionId,
+      mono_connection_id: monoConnectionId,
+    });
+  }
 
-      if (isSimilarName && isSimilarAmount) {
-        groups.get(key)!.push(tx);
-        matched = true;
-        break;
+  // ── Step 3: Index into Solr & cluster via Solr Result Grouping ─────
+  //   Indexing persists transactions across bank syncs so quarterly/yearly
+  //   charges are still detected when only recent transactions arrive.
+  let candidateClusters: NormalizedTx[][] | null = null;
+
+  if (useSolr) {
+    try {
+      const solrDocs: SolrTransactionDoc[] = validNormalized.map(t => ({
+        id: `${userId}::${t.transaction_id}`,
+        user_id: userId,
+        transaction_id: t.transaction_id,
+        ...(t.connection_id ? { connection_id: t.connection_id } : {}),
+        ...(t.mono_connection_id ? { mono_connection_id: t.mono_connection_id } : {}),
+        raw_name: t.raw_name,
+        merchant_raw: t.merchant_raw,
+        merchant_key: t.merchant_key,
+        canonical_name: t.canonical_name,
+        category: t.category,
+        amount: t.amount,
+        tx_date: toSolrDate(t.date),
+        is_non_subscription: false,
+      }));
+
+      if (solrDocs.length > 0) {
+        await indexTransactions(solrDocs);
       }
-    }
-    if (!matched) {
-      groups.set(`${normalized}|${tx.amount}`, [tx]);
+
+      const grouped = await getUserTransactionsGrouped(userId);
+      candidateClusters = [];
+      for (const grp of grouped) {
+        const mapped: NormalizedTx[] = grp.docs.map(d => ({
+          transaction_id: d.transaction_id,
+          raw_name: d.raw_name,
+          merchant_raw: d.merchant_raw,
+          merchant_key: d.merchant_key,
+          canonical_name: d.canonical_name,
+          category: d.category,
+          amount: d.amount,
+          date: d.tx_date.split('T')[0],
+          connection_id: d.connection_id,
+          mono_connection_id: d.mono_connection_id,
+        }));
+        candidateClusters.push(...clusterByAmount(mapped));
+      }
+    } catch (err) {
+      console.warn('[RecurringEngine] Solr transaction grouping failed — using in-memory fallback:', err);
+      candidateClusters = null;
     }
   }
 
+  if (!candidateClusters) {
+    candidateClusters = groupInMemory(validNormalized);
+  }
+
+  // ── Step 4: Detect recurrence patterns & persist subscriptions ─────
   let detected = 0;
   let updated = 0;
 
-  for (const [, txGroup] of groups) {
-    // Require at least 2 transactions to establish a recurrence pattern.
-    // A single transaction — even from a known merchant like Apple or Google —
-    // could be a one-time purchase and should NOT be flagged as a subscription.
+  for (const txGroup of candidateClusters) {
     if (txGroup.length < 2) continue;
 
-    // Sort chronologically
-    const sorted = txGroup.sort(
+    const sorted = [...txGroup].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
 
-    // Compute gaps in days between consecutive transactions
     const gaps: number[] = [];
     for (let i = 1; i < sorted.length; i++) {
       const diff =
@@ -389,31 +360,38 @@ export async function runRecurringEngine(
     }
 
     const cycle = detectCycle(gaps);
-    if (!cycle) continue; // Not a recognizable recurring pattern
+    if (!cycle) continue;
 
-    // Check amount consistency (allow <5% variance)
+    // Amount consistency check (< 5% variance from cluster mean)
     const amounts = sorted.map(t => t.amount);
     const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+    if (avgAmount <= 0) continue;
     const allConsistent = amounts.every(
       a => Math.abs(a - avgAmount) / avgAmount < 0.05
     );
     if (!allConsistent) continue;
 
-    // Extract subscription metadata
     const latest = sorted[sorted.length - 1];
+    const canonicalName = latest.canonical_name;
+    const category = latest.category || 'Other';
+
+    // Self-learn newly discovered recurring merchants into Solr
+    if (useSolr && latest.merchant_key.startsWith('norm:') && category !== 'Other') {
+      upsertLearnedMerchant(canonicalName, category, cycle).catch(() => {});
+    }
+
     const lastBillingDate = new Date(latest.date);
     const nextBillingDate = computeNextBillingDate(lastBillingDate, cycle);
     const billingCycleDay = lastBillingDate.getDate();
-    const merchantName = latest.merchant_name || latest.name;
 
-    // Map category, with brand dictionary taking priority over raw category
-    const rawCategory = latest.category?.[0] ?? null;
-    const category = resolveMerchantCategory(merchantName, rawCategory);
-
+    // Match existing subscription by canonical name OR raw descriptor (handles pre-Solr entries)
     const existing = await prisma.subscription.findFirst({
       where: {
         userId,
-        name: { equals: merchantName, mode: 'insensitive' },
+        OR: [
+          { name: { equals: canonicalName, mode: 'insensitive' } },
+          { name: { equals: latest.merchant_raw, mode: 'insensitive' } },
+        ],
       },
     });
 
@@ -433,11 +411,11 @@ export async function runRecurringEngine(
       });
       updated++;
     } else {
-      detected++; // only count genuinely new subscriptions
+      detected++;
       await prisma.subscription.create({
         data: {
           userId,
-          name: merchantName,
+          name: canonicalName,
           price: avgAmount,
           currency: 'USD',
           billingCycle: cycle,

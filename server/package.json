@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm install --prefix .. && npm run build --prefix .. && prisma generate && prisma db push --accept-data-loss && tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "seed:solr": "tsx src/scripts/seedSolr.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.0.0",

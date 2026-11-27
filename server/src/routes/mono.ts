@@ -2,6 +2,7 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { runRecurringEngine } from '../lib/recurringEngine';
+import { deleteTransactionsByConnection } from '../lib/solrClient';
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -236,6 +237,7 @@ router.delete('/items/:id', async (req: AuthRequest, res) => {
     }
 
     await prisma.monoConnection.delete({ where: { id: connection.id } });
+    deleteTransactionsByConnection(req.userId!, { monoConnectionId: connection.id }).catch(() => {});
 
     res.json({ success: true });
   } catch (error) {

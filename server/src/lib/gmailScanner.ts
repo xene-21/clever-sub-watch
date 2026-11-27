@@ -1,8 +1,22 @@
 import { google } from 'googleapis';
 import OpenAI from 'openai';
 import { prisma } from './prisma';
+import {
+  inferCategoryViaSolr,
+  isSolrOnline,
+  lookupMerchant,
+  upsertLearnedMerchant,
+} from './solrClient';
+import {
+  mapWithConcurrency,
+  staticIsNonSubscription,
+  staticResolveMerchantCategory,
+  stripGatewayPrefix,
+} from './merchantFallback';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 const OPENAI_MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
 
 // Typed error so your API route can send a useful message to the frontend
@@ -45,24 +59,6 @@ function extractBody(payload: any): string {
 
 function getEmailBody(message: any): string {
   return extractBody(message.payload).trim().replace(/\s+/g, ' ');
-}
-
-// Run async tasks with limited concurrency (avoids timeouts AND Gmail rate limits)
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let i = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) {
-      const idx = i++;
-      results[idx] = await fn(items[idx]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
 }
 
 function describeGoogleError(err: any): SyncError {
@@ -183,6 +179,8 @@ async function classifyEmail(
   category: string;
   startDate: string;
 } | null> {
+  if (!openai) return null;
+
   const systemPrompt = `You are a subscription receipt detector. Given the text of a single email, decide if it is a receipt or confirmation for a RECURRING subscription charge.
 
 Rules — the email MUST qualify ALL of the following to count:
@@ -228,6 +226,56 @@ If it does not qualify, respond with ONLY:
   } catch {
     return null;
   }
+}
+
+interface ResolvedEmailMerchant {
+  name: string;
+  category: string;
+  matchedInSolr: boolean;
+  isBlocklisted: boolean;
+}
+
+async function resolveEmailMerchant(
+  rawName: string,
+  rawCategory: string,
+  userId: string,
+  useSolr: boolean
+): Promise<ResolvedEmailMerchant> {
+  if (staticIsNonSubscription(rawName)) {
+    return { name: rawName, category: 'BLOCKLIST', matchedInSolr: false, isBlocklisted: true };
+  }
+
+  let canonicalName = stripGatewayPrefix(rawName) || rawName.trim();
+  let category = rawCategory || 'Other';
+  let matchedInSolr = false;
+
+  if (useSolr) {
+    const match = await lookupMerchant(rawName);
+    if (match) {
+      if (match.is_non_subscription) {
+        return {
+          name: match.canonical_name,
+          category: 'BLOCKLIST',
+          matchedInSolr: true,
+          isBlocklisted: true,
+        };
+      }
+      matchedInSolr = true;
+      canonicalName = match.canonical_name;
+      if (match.category && match.category !== 'BLOCKLIST' && match.category !== 'Other') {
+        category = match.category;
+      }
+    } else if (category === 'Other') {
+      const inferred = await inferCategoryViaSolr(rawName, userId);
+      if (inferred) category = inferred;
+    }
+  }
+
+  if (category === 'Other') {
+    category = staticResolveMerchantCategory(canonicalName, null);
+  }
+
+  return { name: canonicalName, category, matchedInSolr, isBlocklisted: false };
 }
 
 export async function scanUserEmails(userId: string): Promise<number> {
@@ -301,12 +349,22 @@ export async function scanUserEmails(userId: string): Promise<number> {
     }
   });
 
-  // Load existing subscription names for deduplication (case-insensitive)
+  const useSolr = await isSolrOnline('GmailScanner');
+
+  // Load existing subscription names for deduplication (case-insensitive + Solr canonical names)
   const existing = await prisma.subscription.findMany({
     where: { userId },
     select: { name: true },
   });
   const seen = new Set(existing.map((s) => s.name.trim().toLowerCase()));
+  if (useSolr && existing.length > 0) {
+    await mapWithConcurrency(existing, 8, async (sub) => {
+      const match = await lookupMerchant(sub.name);
+      if (match && !match.is_non_subscription) {
+        seen.add(match.canonical_name.trim().toLowerCase());
+      }
+    });
+  }
 
   let count = 0;
 
@@ -319,27 +377,39 @@ export async function scanUserEmails(userId: string): Promise<number> {
 
     const emailDate = getEmailDate(detail);
 
-    const result = process.env.OPENAI_API_KEY
+    const result = openai
       ? await classifyEmail(body, emailDate)
       : fallbackClassify(body, getHeader(detail, 'from'), emailDate);
     if (!result) continue;
 
-    const key = result.name.toLowerCase();
-    if (seen.has(key)) {
+    const resolved = await resolveEmailMerchant(result.name, result.category, userId, useSolr);
+    if (resolved.isBlocklisted) {
+      console.log(`[Gmail] Skipping non-subscription receipt: "${result.name}"`);
+      continue;
+    }
+
+    const rawKey = result.name.trim().toLowerCase();
+    const canonicalKey = resolved.name.trim().toLowerCase();
+    if (seen.has(rawKey) || seen.has(canonicalKey)) {
       console.log(`[Gmail] Skipping duplicate: "${result.name}"`);
       continue;
     }
-    seen.add(key);
+    seen.add(rawKey);
+    seen.add(canonicalKey);
+
+    if (useSolr && !resolved.matchedInSolr && resolved.category !== 'Other' && !resolved.name.includes('@')) {
+      upsertLearnedMerchant(resolved.name, resolved.category, result.billingCycle).catch(() => {});
+    }
 
     const startDate = new Date(result.startDate);
     const nextBillingDate = upcomingBillingDate(startDate, result.billingCycle);
 
     await prisma.subscription.create({
       data: {
-        name: result.name,
+        name: resolved.name,
         price: result.price,
         billingCycle: result.billingCycle,
-        category: result.category,
+        category: resolved.category,
         status: 'active',
         detectionSource: 'email',
         startDate,
@@ -350,7 +420,7 @@ export async function scanUserEmails(userId: string): Promise<number> {
     });
 
     console.log(
-      `[Gmail] Detected: "${result.name}" $${result.price}/${result.billingCycle} (from email dated ${result.startDate})`
+      `[Gmail] Detected: "${resolved.name}" $${result.price}/${result.billingCycle} [${resolved.category}] (from email dated ${result.startDate})`
     );
     count++;
   }
